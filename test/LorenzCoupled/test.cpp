@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
     Lorenz lz;
     for(int t=0; t<1000000; ++t){
         lz.Solve(inout_state, t*0.0001, 0.0001);
-        if(t%2==0){
+        if(t%200==0){
             printf(" %lf ", t*0.001);
         
             for(int j=0; j<300; ++j){

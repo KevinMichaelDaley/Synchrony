@@ -10,7 +10,7 @@
 static char* linear_mem_pool[Config::MaxThreads];
 static size_t alloc_head[Config::MaxThreads]={0};
 
-template<typename T> inline T* AllocateTemporaryBuffer(size_t N, int tidx){
+template<typename T> inline HOST  T* AllocateTemporaryBuffer(size_t N, int tidx){
     if(__builtin_expect(linear_mem_pool[tidx]==nullptr, false)){
         linear_mem_pool[tidx]=new char[Config::ThreadLocalTemporaryHeapSize];
         std::memset(linear_mem_pool[tidx], 0xba, Config::ThreadLocalTemporaryHeapSize);
@@ -24,10 +24,13 @@ template<typename T> inline T* AllocateTemporaryBuffer(size_t N, int tidx){
     size_t head0=alloc_head[tidx]-sz;
     char* res=&(linear_mem_pool[tidx][head0]);
     return reinterpret_cast<T*>(res);
-    
 }
 
-template<typename T> inline void FreeTemporaryBuffer(const T* ptr, int tidx){    //temporary buffers must be freed in reverse order of allocation,
+
+
+
+
+template<typename T> inline HOST int FreeTemporaryBuffer(const T* ptr, int tidx){    //temporary buffers must be freed in reverse order of allocation,
                                                                     //so that we always know where the head is.  these are generally used for local per-function storage that "goes out of scope" when we are finished with it,
                                                                     //so they can be treated mathematically like stack allocations, even though they are too big to live on the actual stack.
                                                                     //alternatively, the oldest one can be freed, which automatically frees all the newer ones.
@@ -37,7 +40,8 @@ template<typename T> inline void FreeTemporaryBuffer(const T* ptr, int tidx){   
     std::ptrdiff_t head=reinterpret_cast<std::ptrdiff_t>(ptr) - reinterpret_cast<std::ptrdiff_t>(linear_mem_pool[tidx]);
     if(__builtin_expect(head>=0 && head0<Config::ThreadLocalTemporaryHeapSize && static_cast<size_t>(head)<head0,true)){
             alloc_head[tidx]=head;
-            return;
+            return 0;
     }
     free(const_cast<T*>(ptr));//we are outside the range so we must have allocated this using malloc.
+    return 0;
 }
