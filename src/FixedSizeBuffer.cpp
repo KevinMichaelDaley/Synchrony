@@ -4,26 +4,26 @@
     #include <cassert>
 #endif
 #include <cmath>
-inline HOSTDEVICE void FixedSizeDoubleBuffer::BoundsAssert(size_t index) const{
+inline HOSTDEVICE void FixedSizeRealBuffer::BoundsAssert(size_t index) const{
     assert(index<_len);
 }
 
-HOSTDEVICE size_t FixedSizeDoubleBuffer::GetLength() const{
+HOSTDEVICE size_t FixedSizeRealBuffer::GetLength() const{
     return _len;
 }
 
-HOSTDEVICE double FixedSizeDoubleBuffer::Get(size_t index) const{
+HOSTDEVICE real_t FixedSizeRealBuffer::Get(size_t index) const{
     BoundsAssert(index);
     return _buf[index];
 }
 
-HOSTDEVICE void FixedSizeDoubleBuffer::Set(size_t index, double val){
+HOSTDEVICE void FixedSizeRealBuffer::Set(size_t index, real_t val){
     BoundsAssert(index);
     assert(!std::isnan(val));
     _buf[index]=val;
 }
 
-HOSTDEVICE void FixedSizeDoubleBuffer::AccumulateWeighted(double weight, const FixedSizeDoubleBuffer& term, long start, long end, size_t o){
+HOSTDEVICE void FixedSizeRealBuffer::AccumulateWeighted(real_t weight, const FixedSizeRealBuffer& term, long start, long end, size_t o){
     if(end<0){
         end=term.GetLength();
     }
@@ -36,12 +36,12 @@ HOSTDEVICE void FixedSizeDoubleBuffer::AccumulateWeighted(double weight, const F
         _buf[entry_i-s+o]+=weight*term.Get(entry_i);
     }
 }
-HOSTDEVICE void FixedSizeDoubleBuffer::FillWith(double val){
+HOSTDEVICE void FixedSizeRealBuffer::FillWith(real_t val){
     for(size_t entry_i=0; entry_i<_len; ++entry_i){
         _buf[entry_i]=val;
     }
 }
-HOSTDEVICE void FixedSizeDoubleBuffer::CopyFrom(const FixedSizeDoubleBuffer& other, long start, long end, size_t o){
+HOSTDEVICE void FixedSizeRealBuffer::CopyFrom(const FixedSizeRealBuffer& other, long start, long end, size_t o){
     if(end<0){
         end=other.GetLength();
     }

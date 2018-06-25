@@ -30,3 +30,6 @@
 *.exe
 *.out
 *.app
+
+#files we don't need
+plot_sweep.py

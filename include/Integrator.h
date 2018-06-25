@@ -4,21 +4,24 @@
 #include "ThreadInfo.h"
 #include <type_traits>
 #include <cassert>
-template<size_t N> class DoubleArray{
+template<size_t N> class RealArray{
 private:
-    double arr[N];
+    real_t arr[N];
 public:
-    HOSTDEVICE DoubleArray(double a[]){
+    HOSTDEVICE RealArray(real_t a[]){
         for(size_t i=0; i<N; ++i){
             arr[i]=a[i];
         }
     }
-    HOSTDEVICE DoubleArray(double a[], size_t subN){
+    HOSTDEVICE RealArray(real_t a[], size_t subN){
         for(size_t i=0; i<subN; ++i){
             arr[i]=a[i];
         }
     }
-    HOSTDEVICE double operator[](int i) const{
+    HOSTDEVICE real_t operator[](int i) const{
+        return arr[i];
+    }
+    HOSTDEVICE real_t& operator[](int i){
         return arr[i];
     }
 };
@@ -26,14 +29,14 @@ public:
 class RKButcherTableau {
 private:
     const size_t s;
-    const DoubleArray<81> A;
-    const DoubleArray<9> B;
-    const DoubleArray<9> C;
+    const RealArray<81> A;
+    const RealArray<9> B;
+    const RealArray<9> C;
     HOSTDEVICE RKButcherTableau()=delete;
     HOSTDEVICE RKButcherTableau(size_t p_s, 
-                     DoubleArray<81> p_A,
-                     DoubleArray<9> p_B,
-                     DoubleArray<9> p_C):
+                     RealArray<81> p_A,
+                     RealArray<9> p_B,
+                     RealArray<9> p_C):
                     s(p_s),
                     A(p_A), B(p_B), C(p_C)
                      
@@ -42,16 +45,16 @@ private:
     }
 public:
     HOSTDEVICE static RKButcherTableau RK4Classic() {//TODO: add more rk methods including adaptive ones (ode45 and etc.)
-        double pA[16]={0,   0, 0,   0,
+        real_t pA[16]={0,   0, 0,   0,
                     0.5, 0, 0,   0,
                     0,   0.5, 0, 0,
                     0,   0,   1.0, 0 };
-        double pB[9]={1.0/6.0, 1.0/3.0, 1.0/3.0, 1.0/6.0, 0};
-        double pC[9]={0,0.5,0.5,0,0};
+        real_t pB[9]={1.0/6.0, 1.0/3.0, 1.0/3.0, 1.0/6.0, 0};
+        real_t pC[9]={0,0.5,0.5,0,0};
         const RKButcherTableau rk4(4,
-                DoubleArray<81>(pA,16),
-                DoubleArray<9>(pB),
-                DoubleArray<9>(pC)
+                RealArray<81>(pA,16),
+                RealArray<9>(pB),
+                RealArray<9>(pC)
                 );
             return rk4;
     }   
@@ -59,15 +62,15 @@ public:
         assert(s<=9);
         return s;
     }
-    inline HOSTDEVICE double GetXCoeff(size_t step_i, size_t prev_j) const{ 
+    inline HOSTDEVICE real_t GetXCoeff(size_t step_i, size_t prev_j) const{ 
         assert(step_i<GetNumStages() && prev_j<GetNumStages());
         return A[step_i * s + prev_j]; 
     }
-    inline HOSTDEVICE double GetYCoeff(size_t step) const{ 
+    inline HOSTDEVICE real_t GetYCoeff(size_t step) const{ 
         assert(step<GetNumStages());
         return B[step];
     }
-    inline HOSTDEVICE double GetTCoeff(size_t step) const {
+    inline HOSTDEVICE real_t GetTCoeff(size_t step) const {
         assert(step<GetNumStages());
         return C[step];
     }
@@ -77,7 +80,7 @@ template<typename SystemT> class System {
     //static polymorphism so all types that are used as arguments to template need to derive from it. 
     //that way we can use the below virtual function call without actually dereferencing anything.
 protected:
-    HOSTDEVICE void Fn( FixedSizeDoubleBuffer& out, const FixedSizeDoubleBuffer& in, double t, const ThreadInfo& thread_info) const{
+    HOSTDEVICE void Fn( FixedSizeRealBuffer& out, const FixedSizeRealBuffer& in, real_t t, const ThreadInfo& thread_info) const{
         static_cast<const SystemT*>(this)->Fn( out, in, t, thread_info );
     }
     HOSTDEVICE size_t GetDimension() const{
@@ -86,9 +89,9 @@ protected:
     HOSTDEVICE size_t GetIndexOffset(const ThreadInfo& thread_info) const{
            return static_cast<const SystemT*>(this)->GetIndexOffset(thread_info);
     }
-    HOSTDEVICE void Integrate(FixedSizeDoubleBuffer& in_out_state, 
-                           double t,
-                           double step_size, 
+    HOSTDEVICE void Integrate(FixedSizeRealBuffer& in_out_state, 
+                           real_t t,
+                           real_t step_size, 
                            const ThreadInfo& thread_info){//override this virtual method with the default integration routine you want to use (if not rk4).
                                                           //for discrete maps this can just be Fn(in_out_state, in_out_state, k)
                                                           
@@ -100,27 +103,27 @@ protected:
     //since they may not be necessary and to store two state arrays here when we might not need to is terribly inefficient for large dimensions.
     
 public:
-    HOST void Solve(FixedSizeDoubleBuffer& in_out_state,
-               double t,
-               double step_size = 0.001, 
+    HOST void Solve(FixedSizeRealBuffer& in_out_state,
+               real_t t,
+               real_t step_size = 0.001, 
                const ThreadInfo& thread_info        =   ThreadInfo::Serial()
          )
     {
         static_cast<SystemT*>(this)->Integrate(in_out_state, t, step_size, thread_info);
     }
 #if defined(__CUDA__)
-    DEVICE void Solve(FixedSizeDoubleBuffer& in_out_state,
-                      double t,
-                      double step_size = 0.001){
+    DEVICE void Solve(FixedSizeRealBuffer& in_out_state,
+                      real_t t,
+                      real_t step_size = 0.001){
         size_t global_id = blockIdx.x *blockDim.x + threadIdx.x;
         static_cast<SystemT*>(this)->Integrate(in_out_state, t, step_size, ThreadInfo(global_id));
     }
 #endif
                       
 private:
-    void HOSTDEVICE IntegrateRKExplicitFixed ( FixedSizeDoubleBuffer& in_out_state, 
-                                    double t,
-                                    double step_size, 
+    void HOSTDEVICE IntegrateRKExplicitFixed ( FixedSizeRealBuffer& in_out_state, 
+                                    real_t t,
+                                    real_t step_size, 
                                     const ThreadInfo& thread_info,
                                     const RKButcherTableau& table = RKButcherTableau::RK4Classic()
                                   )
@@ -131,22 +134,22 @@ private:
         size_t ord=table.GetNumStages();
         size_t dimension=GetDimension();
         
-        FixedSizeDoubleBuffer intermediate_step[256];
+        FixedSizeRealBuffer intermediate_step[256];
         
-        double* const tmp_buffer = AllocateTemporaryBuffer<double>( (ord+1)*dimension , thread_info.GetIndex());
+        real_t* const tmp_buffer = AllocateTemporaryBuffer<real_t>( (ord+1)*dimension , thread_info.GetIndex());
                 
         
-        FixedSizeDoubleBuffer wsum( &(tmp_buffer[ord*dimension]) , dimension);//this stores the intermediate offset
+        FixedSizeRealBuffer wsum( &(tmp_buffer[ord*dimension]) , dimension);//this stores the intermediate offset
     
         for(size_t step_i=0; step_i<ord; ++step_i){
             
-            double* tmp_buffer_i = &tmp_buffer[step_i*dimension];
-            FixedSizeDoubleBuffer& k_i = intermediate_step[step_i];
-            k_i = FixedSizeDoubleBuffer( tmp_buffer_i, dimension);
+            real_t* tmp_buffer_i = &tmp_buffer[step_i*dimension];
+            FixedSizeRealBuffer& k_i = intermediate_step[step_i];
+            k_i = FixedSizeRealBuffer( tmp_buffer_i, dimension);
             wsum.CopyFrom(in_out_state, offset, offset+static_cast<long>(dimension), 0);
             for(size_t prev_j=0; prev_j<step_i; ++prev_j){                    
-                double aij = table.GetXCoeff(step_i, prev_j);
-                const FixedSizeDoubleBuffer& k_j = intermediate_step[prev_j];
+                real_t aij = table.GetXCoeff(step_i, prev_j);
+                const FixedSizeRealBuffer& k_j = intermediate_step[prev_j];
                 wsum.AccumulateWeighted( (aij * step_size) , k_j );
             }//for prev_j
             static_cast<SystemT*>(this)->Fn(k_i, wsum, t + step_i * step_size * table.GetTCoeff(step_i), thread_info);
@@ -154,7 +157,7 @@ private:
         
         
         for(size_t step_i=0; step_i<ord; ++step_i){
-            const FixedSizeDoubleBuffer& k_i = intermediate_step[step_i];
+            const FixedSizeRealBuffer& k_i = intermediate_step[step_i];
             double bij = table.GetYCoeff(step_i);
             in_out_state.AccumulateWeighted( (bij * step_size) , k_i, 0, dimension, offset);
         }
