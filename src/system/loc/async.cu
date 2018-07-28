@@ -27,7 +27,7 @@ DEVICE real_t random_normal(curandState_t* seed, real_t mu=0.0, real_t sigma=1.0
 }
 
 
-static constexpr int Nb=2;
+static constexpr int Nb=1;
 
 	
     constexpr float grav=9.81;
@@ -61,14 +61,12 @@ static constexpr int Nb=2;
 	}
         
     DEVICE void Init(FixedSizeRealBuffer S){
-            int i=Id();
-            int id=i;
+            int id=Id();
             
             S.Set(0,0);
-            if(id%(Nb+Np)>=Nb){
-                real_t Omegap = std::sqrt(grav/L);
-                S.Set(0,u*Omegap*tanh(Omegap*0.25/fp));
-            }
+	    real_t b=static_cast<real_t>(id%(Nb+Np)>=Nb);
+            real_t Omegap = std::sqrt(grav/L);
+            S.Set(0,u*Omegap*std::tanh(Omegap*0.25/fp)*b);
             S.Set(1,0);
     }
 	private:
@@ -144,10 +142,11 @@ static constexpr int Nb=2;
         DEVICE void OnStep( curandState_t* seed, FixedSizeRealBuffer state, real_t T){
             
             real_t Omegap = std::sqrt(grav/L);
-            float b=(step_next<=T);
-            step_next+=b*(0.5/fp*random_normal(seed,1.0,0.05));
-            u=(1-b)*u+(b)*(state.Get(1)+state.Get(0)/Omegap+bmin*(random_normal(seed,1,0.2)));
-            bmin=(1-2*b)*bmin;
+            if(std::abs(GetTimeUntilNextStep()-T)<1e-10){
+	            step_next=T+0.5/fp*random_normal(seed,1.0,0.05);
+        	    u=state.Get(1)+state.Get(0)/Omegap+bmin*(random_normal(seed,1.0,0.2));
+	            bmin=-bmin;
+	    }
         }
 	};
 
@@ -183,16 +182,11 @@ static constexpr int Nb=2;
 	    Async tn=Async(Np, &seed_state);
 	    tn.Init(S);
 	    real_t T=0.0;
-	    real_t h=0.005, hmax=dt/2.0;
+	    real_t h=0.001, hmax=std::min(dt/2.0,0.01);
+	    real_t hmin=0.0001;
+	    unsigned t=0;
         while(T<180.0){
                     
-                    if(o<Nb+5){
-                        if(std::abs(unsigned(T/dt)*dt-T)<h){
-                            
-                            traces[o+unsigned(T/dt)*(5+Nb)]=S.Get(1);
-                        }
-
-                    }
                     
                     min_next_step[0]=std::numeric_limits<uint32_t>::max();
                     __syncthreads();
@@ -209,9 +203,16 @@ static constexpr int Nb=2;
                     cvt.u=IFloatFlip(min_next_step[0]);
                     float min_next=cvt.f;
                     while(T<min_next-h){
+                    	if(o<Nb+5){
+                        	if(T>=t*dt){
+                            
+                           	 traces[o+t*(5+Nb)]=S.Get(1);
+			   	 ++t;
+                        	}
+
+                    	}
 #ifdef ADAPTIVE
                                 while(true){
-                                    h=std::min(h,hmax);
                                     max_err[0]=0;
                                     __syncthreads();
                                     real_t S0[2]={S.Get(0), S.Get(1)};
@@ -223,11 +224,12 @@ static constexpr int Nb=2;
                                     cvt.u=IFloatFlip(max_err[0]);
                                     real_t err=cvt.f;
                                     if(err>0.0){
-                                        h*=pow(threshold/(2.0*err),0.2);
+                                        h*=pow(threshold/(err),0.2);
                                         
+                                    	h=std::max(std::min(h,hmax),hmin);
                                     }
 
-                                    if(err<threshold){
+                                    if(err<threshold || h==hmin){
                                         break;
                                     }
                                     state[0]=S0[0];
