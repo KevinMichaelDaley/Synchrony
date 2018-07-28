@@ -10,9 +10,12 @@ protected:
     HOSTDEVICE size_t GetDimension() const{
         return 6;
     }
-    HOSTDEVICE void Fn(FixedSizeDoubleBuffer& out, FixedSizeDoubleBuffer& in, double t, const ThreadInfo& thread_info) const{
+    HOST void FnHost(FixedSizeRealBuffer& out, const FixedSizeRealBuffer& in, double t, const ThreadInfo& thread_info) const{
+	    throw;
+    }
+    DEVICE void FnGPU(FixedSizeRealBuffer& out, const FixedSizeRealBuffer& in, double t, const ThreadInfo& thread_info) const{
         int global_id=thread_info.GetIndex();
-        double coupling_strength = 8/256.0 * global_id;
+        double coupling_strength = 8/4.0 * global_id;
         for(int i=0; i<2; ++i){
             
                 
@@ -32,7 +35,7 @@ protected:
 };
 
 __global__ void integrate(double* s, size_t N){
-    FixedSizeDoubleBuffer inout_state(s,N);
+    FixedSizeRealBuffer inout_state(s,6);
     Lorenz lz;
     for(int t=0; t<10; ++t){
         lz.Solve(inout_state, t*0.001, 0.001);
@@ -41,14 +44,14 @@ __global__ void integrate(double* s, size_t N){
 
 __host__ int main(int argc, char** argv) {
     double* s;
-    cudaMallocManaged(&s, 6*256*sizeof(double));
-    for(int i=0; i<6*256; ++i){
+    cudaMallocManaged(&s, 6*sizeof(double));
+    for(int i=0; i<6; ++i){
         s[i]=(rand()%1000)/10000.0;
     }
 
     
     for(int t=0; t<1000000/200; ++t){
-            integrate<<<1,256>>>(s, 6*256);
+            integrate<<<1,1>>>(s, 6);
             cudaDeviceSynchronize();
             cudaError_t error = cudaGetLastError();
             if(error!=cudaSuccess)
@@ -58,7 +61,7 @@ __host__ int main(int argc, char** argv) {
             }
             printf(" %lf ", t*0.0001);
             
-            for(int j=0; j<6*256; ++j){
+            for(int j=0; j<6; ++j){
                 printf(" %lf ", s[j]);
             }
             

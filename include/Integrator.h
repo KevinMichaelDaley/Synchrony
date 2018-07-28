@@ -1,87 +1,30 @@
 #pragma once
+
+#if defined(__CUDA__)
 #include "AllocateGPU.h"
+#else
+#include "Allocate.h"
+#endif
+
 #include "FixedSizeBuffer.h"
 #include "ThreadInfo.h"
+#include "RK.h"
 #include <type_traits>
 #include <cassert>
-template<size_t N> class RealArray{
-private:
-    real_t arr[N];
-public:
-    HOSTDEVICE RealArray(real_t a[]){
-        for(size_t i=0; i<N; ++i){
-            arr[i]=a[i];
-        }
-    }
-    HOSTDEVICE RealArray(real_t a[], size_t subN){
-        for(size_t i=0; i<subN; ++i){
-            arr[i]=a[i];
-        }
-    }
-    HOSTDEVICE real_t operator[](int i) const{
-        return arr[i];
-    }
-    HOSTDEVICE real_t& operator[](int i){
-        return arr[i];
-    }
-};
-
-class RKButcherTableau {
-private:
-    const size_t s;
-    const RealArray<81> A;
-    const RealArray<9> B;
-    const RealArray<9> C;
-    HOSTDEVICE RKButcherTableau()=delete;
-    HOSTDEVICE RKButcherTableau(size_t p_s, 
-                     RealArray<81> p_A,
-                     RealArray<9> p_B,
-                     RealArray<9> p_C):
-                    s(p_s),
-                    A(p_A), B(p_B), C(p_C)
-                     
-    {
-        
-    }
-public:
-    HOSTDEVICE static RKButcherTableau RK4Classic() {//TODO: add more rk methods including adaptive ones (ode45 and etc.)
-        real_t pA[16]={0,   0, 0,   0,
-                    0.5, 0, 0,   0,
-                    0,   0.5, 0, 0,
-                    0,   0,   1.0, 0 };
-        real_t pB[9]={1.0/6.0, 1.0/3.0, 1.0/3.0, 1.0/6.0, 0};
-        real_t pC[9]={0,0.5,0.5,0,0};
-        const RKButcherTableau rk4(4,
-                RealArray<81>(pA,16),
-                RealArray<9>(pB),
-                RealArray<9>(pC)
-                );
-            return rk4;
-    }   
-    inline HOSTDEVICE size_t GetNumStages() const{
-        assert(s<=9);
-        return s;
-    }
-    inline HOSTDEVICE real_t GetXCoeff(size_t step_i, size_t prev_j) const{ 
-        assert(step_i<GetNumStages() && prev_j<GetNumStages());
-        return A[step_i * s + prev_j]; 
-    }
-    inline HOSTDEVICE real_t GetYCoeff(size_t step) const{ 
-        assert(step<GetNumStages());
-        return B[step];
-    }
-    inline HOSTDEVICE real_t GetTCoeff(size_t step) const {
-        assert(step<GetNumStages());
-        return C[step];
-    }
-};
 
 template<typename SystemT> class System {
     //static polymorphism so all types that are used as arguments to template need to derive from it. 
     //that way we can use the below virtual function call without actually dereferencing anything.
 protected:
-    HOSTDEVICE void Fn( FixedSizeRealBuffer& out, const FixedSizeRealBuffer& in, real_t t, const ThreadInfo& thread_info) const{
-        static_cast<const SystemT*>(this)->Fn( out, in, t, thread_info );
+    
+#if defined(__CUDA__)
+    DEVICE void Fn( FixedSizeRealBuffer& out, const FixedSizeRealBuffer& in, real_t t, const ThreadInfo& thread_info) const{
+        static_cast<const SystemT*>(this)->FnGPU( out, in, t, thread_info );
+    }
+#endif
+    
+    HOST void Fn( FixedSizeRealBuffer& out, const FixedSizeRealBuffer& in, real_t t, const ThreadInfo& thread_info) const{
+        static_cast<const SystemT*>(this)->FnHost( out, in, t, thread_info );
     }
     HOSTDEVICE size_t GetDimension() const{
         return static_cast<const SystemT*>(this)->GetDimension();
@@ -89,13 +32,18 @@ protected:
     HOSTDEVICE size_t GetIndexOffset(const ThreadInfo& thread_info) const{
            return static_cast<const SystemT*>(this)->GetIndexOffset(thread_info);
     }
-    HOSTDEVICE void Integrate(FixedSizeRealBuffer& in_out_state, 
+    HOSTDEVICE real_t Integrate(FixedSizeRealBuffer& in_out_state, 
                            real_t t,
                            real_t step_size, 
-                           const ThreadInfo& thread_info){//override this virtual method with the default integration routine you want to use (if not rk4).
+                           const ThreadInfo& thread_info, 
+                           bool adaptive){//override this virtual method with the default integration routine you want to use (if not rk4/ode45).
                                                           //for discrete maps this can just be Fn(in_out_state, in_out_state, k)
-                                                          
-        IntegrateRKExplicitFixed(in_out_state, t, step_size, thread_info);
+        if(!adaptive){
+            IntegrateRKExplicitFixed(in_out_state, t, step_size, thread_info);
+            return 0;
+        } else{
+            return IntegrateRKExplicitAdaptive(in_out_state, t, step_size, thread_info);
+        }
     }
     //add new integration routines to this template so they can be reused.
     //parameters fixed over the whole trajectory are set in the constructor/whatever get-setter methods of the derived class
@@ -103,20 +51,24 @@ protected:
     //since they may not be necessary and to store two state arrays here when we might not need to is terribly inefficient for large dimensions.
     
 public:
-    HOST void Solve(FixedSizeRealBuffer& in_out_state,
+    HOST real_t Solve(FixedSizeRealBuffer& in_out_state,
                real_t t,
-               real_t step_size = 0.001, 
-               const ThreadInfo& thread_info        =   ThreadInfo::Serial()
+               real_t step_size, 
+               const ThreadInfo& thread_info        =   ThreadInfo::Serial(),
+                bool adaptive=true
+               
          )
     {
-        static_cast<SystemT*>(this)->Integrate(in_out_state, t, step_size, thread_info);
+        return static_cast<SystemT*>(this)->Integrate(in_out_state, t, step_size, thread_info, adaptive);
     }
 #if defined(__CUDA__)
-    DEVICE void Solve(FixedSizeRealBuffer& in_out_state,
+    DEVICE real_t Solve(FixedSizeRealBuffer& in_out_state,
                       real_t t,
-                      real_t step_size = 0.001){
+                      real_t step_size,
+                      bool adaptive=true//if we are not using an adaptive method, then we always return 0
+                       ){
         size_t global_id = blockIdx.x *blockDim.x + threadIdx.x;
-        static_cast<SystemT*>(this)->Integrate(in_out_state, t, step_size, ThreadInfo(global_id));
+        return static_cast<SystemT*>(this)->Integrate(in_out_state, t, step_size, ThreadInfo(global_id), adaptive);
     }
 #endif
                       
@@ -134,10 +86,15 @@ private:
         size_t ord=table.GetNumStages();
         size_t dimension=GetDimension();
         
-        FixedSizeRealBuffer intermediate_step[256];
-        
-        real_t* const tmp_buffer = AllocateTemporaryBuffer<real_t>( (ord+1)*dimension , thread_info.GetIndex());
-                
+        FixedSizeRealBuffer intermediate_step[10];
+        bool needs_free=false;
+        real_t lmem[32]={0};
+        real_t* tmp_buffer=&lmem[0];
+        if((ord+1)*dimension>=32){
+            needs_free=true;
+            tmp_buffer = AllocateTemporaryBuffer<real_t>( (ord+1)*dimension , thread_info.GetIndex());
+        }
+            
         
         FixedSizeRealBuffer wsum( &(tmp_buffer[ord*dimension]) , dimension);//this stores the intermediate offset
     
@@ -161,10 +118,51 @@ private:
             double bij = table.GetYCoeff(step_i);
             in_out_state.AccumulateWeighted( (bij * step_size) , k_i, 0, dimension, offset);
         }
+        if(needs_free){
+            FreeTemporaryBuffer(tmp_buffer, thread_info.GetIndex());
+        }
         
-        FreeTemporaryBuffer(tmp_buffer, thread_info.GetIndex());
         
-        
+    }//method
+    real_t HOSTDEVICE IntegrateRKExplicitAdaptive ( FixedSizeRealBuffer& in_out_state, 
+                                    real_t t,
+                                    real_t step_size, 
+                                    const ThreadInfo& thread_info,
+                                    const RKButcherTableau& table_lo = RKButcherTableau::RKDormandPrince<false>(),
+                                    const RKButcherTableau& table_hi = RKButcherTableau::RKDormandPrince<true>(),
+                                    bool continue_from_hi=true
+                                  )
+    {//explicit runge-kutta method of arbitrary order and coefficients.
+        const size_t dimension=GetDimension();
+        const long offset = GetIndexOffset(thread_info);
+        bool needs_free=false;
+        real_t lmem[16]={0};
+        real_t* tmp_buffer=&lmem[0];
+        if(2*dimension>=16){
+            needs_free=true;
+            tmp_buffer = AllocateTemporaryBuffer<real_t>( 2*dimension , thread_info.GetIndex());
+        }
+        FixedSizeRealBuffer s1(&tmp_buffer[0], dimension);
+        FixedSizeRealBuffer s2(&tmp_buffer[dimension], dimension);
+        s1.CopyFrom(in_out_state, offset, offset+static_cast<long>(dimension), 0);
+        s2.CopyFrom(in_out_state, offset, offset+static_cast<long>(dimension), 0);
+        IntegrateRKExplicitFixed ( s1, t, step_size, thread_info, table_lo );
+        IntegrateRKExplicitFixed ( s2, t, step_size, thread_info, table_hi );
+        real_t normsq=0.0;
+        for(size_t i=0; i<dimension; ++i){
+            real_t d=s1.Get(i)-s2.Get(i);
+            normsq+=d*d;
+        }
+        if(continue_from_hi){
+            in_out_state.CopyFrom(s2, 0, static_cast<long>(dimension), offset);
+        }
+        else{
+            in_out_state.CopyFrom(s1, 0, static_cast<long>(dimension), offset);
+        }
+        if(needs_free){
+            FreeTemporaryBuffer(tmp_buffer, thread_info.GetIndex());
+        }
+        return normsq;
     }//method
 };//class
         

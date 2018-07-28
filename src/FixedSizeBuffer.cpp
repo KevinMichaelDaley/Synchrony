@@ -14,6 +14,7 @@ HOSTDEVICE size_t FixedSizeRealBuffer::GetLength() const{
 
 HOSTDEVICE real_t FixedSizeRealBuffer::Get(size_t index) const{
     BoundsAssert(index);
+    assert(!std::isnan(_buf[index]));
     return _buf[index];
 }
 

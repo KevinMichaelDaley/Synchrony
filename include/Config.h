@@ -20,9 +20,9 @@ namespace Config{
 #endif
 #define CUDA_MAX_STATIC_ARRAY_SIZE 2048*1024*1024uL
     static constexpr size_t MaxThreads=256;
-    static constexpr size_t MaxGPUThreads=4096;
+    static constexpr size_t MaxGPUThreads=256*256;
     static constexpr size_t MaxStackBufferSize=4096;
-    static constexpr size_t ThreadLocalTemporaryHeapSize=8*1024*1024;
-    static constexpr size_t ThreadLocalTemporaryHeapSizeGPU=128*1024;
+    static constexpr size_t ThreadLocalTemporaryHeapSize=2*1024*1024;
+    static constexpr size_t ThreadLocalTemporaryHeapSizeGPU=4096;
 
 }

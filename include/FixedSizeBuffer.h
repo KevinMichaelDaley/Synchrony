@@ -12,6 +12,9 @@ public:
     HOSTDEVICE FixedSizeRealBuffer(real_t* data, size_t N): _buf(data), 
                                                    _len(N)     
                                                     {}
+    real_t* GetBufferUnsafe(){
+        return _buf;
+    }
     //note: deleting this container doesn't delete the underlying storage,
     //since it might be allocated elsewhere (or static).
     HOSTDEVICE ~FixedSizeRealBuffer(){}

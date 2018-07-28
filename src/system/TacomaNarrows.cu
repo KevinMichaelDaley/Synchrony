@@ -5,10 +5,8 @@
 #include "Config.h"
 #include <cuda.h>
 #include "../../src/FixedSizeBuffer.cpp"//FIXME: 
-HOSTDEVICE real_t sgn(real_t x){
-    if(x==0) return 0;
-    if(x>0) return 1;
-    return -1;
+inline HOSTDEVICE real_t sgn(real_t n){
+	return (n > 0.0) - (n < 0.0);
 }
 struct TacomaParameters{
 
@@ -177,147 +175,142 @@ struct AmplitudeState{
 
 struct PhaseState{
     int zero_crossing0;
-    int period_avg;
     int delta_avg;
-    int period;
-    HOSTDEVICE PhaseState(): zero_crossing0(-1), period_avg(0), delta_avg(0), period(0)
-    {
-    }
-    HOSTDEVICE void Accum(int t, real_t x, real_t x0, real_t y, real_t y0){
-        if(x>=0 && x0<0){
-            if(zero_crossing0>0){
-                period=t-zero_crossing0;
-            }
-            zero_crossing0=t;
-        }
-        if(y>=0 && y0<0 && zero_crossing0>0){
-            period_avg+=period;
-            delta_avg+=t-zero_crossing0;
-        }
-    }
-    HOSTDEVICE real_t Get() const{
-        real_t pdiff=delta_avg;
-        return pdiff;
-    }
-};
+	    HOSTDEVICE PhaseState(): zero_crossing0(-1), delta_avg(0)
+	    {
+	    }
+	    HOSTDEVICE void Accum(int t, real_t x, real_t x0, real_t y, real_t y0){
+		if(x>=0 && x0<0){
+		    zero_crossing0=t;
+		}
+		if(y>=0 && y0<0 && zero_crossing0>0){
+		    delta_avg+=t-zero_crossing0;
+		}
+	    }
+	    HOSTDEVICE real_t Get() const{
+		return delta_avg;
+	    }
+	};
 #if defined(__CUDA__)
-DEVICE unsigned Id(){
-    return blockIdx.x*blockDim.x+threadIdx.x;
-}
+	DEVICE unsigned Id(){
+	    return blockIdx.x*blockDim.x+threadIdx.x;
+	}
 #endif
 
-HOST unsigned Id(){
-    return 0;
-}
+	HOST unsigned Id(){
+	    return 0;
+	}
 
 
-class TacomaNarrows : public System<TacomaNarrows> {
-friend class System<TacomaNarrows>;
-public:
-HOSTDEVICE TacomaNarrows (unsigned N, const ParamRange& amp_forcing, const ParamRange& freq_forcing, const ParamRange& freq_intrin, bool is_linear, const ParamRange& mismatch):
-        _params( make_default_params(freq_intrin.Get(Id()%N,N), freq_forcing.Get(Id()%N,N), amp_forcing.Get(Id()/N,N)) ),
-        _is_linear(is_linear),
-        _eigenvalue(is_linear?find_zero(_params):0),
-        _mismatch(mismatch.Get(Id()/N, N))
-    {}
-public:
-    HOSTDEVICE TacomaParameters GetParams() const{
-        return _params;
-    }
-    HOSTDEVICE real_t GetMismatch() const{
-        return _mismatch;
-    }
-    HOSTDEVICE real_t GetEigenvalue() const{
-        return _eigenvalue;
-    }
-private:
-    TacomaParameters _params;
-    const bool _is_linear;
-    const real_t _eigenvalue;
-    const real_t _mismatch;
-    
-    HOSTDEVICE size_t GetIndexOffset(const ThreadInfo& thread_info) const{
-        return thread_info.GetIndex()*6;
-    }
-    HOSTDEVICE size_t GetDimension() const{
-        return 6;
-    }
-    HOSTDEVICE void Fn(FixedSizeRealBuffer& out, FixedSizeRealBuffer& in, real_t t, const ThreadInfo& thread_info) const{
-        int param_index=thread_info.GetIndex();
-        
-        real_t eig=_eigenvalue;
-        real_t mismatch=_mismatch;
-        bool linear=_is_linear;
-        TacomaParameters params=_params;
-        real_t svel[2]={in.Get(0),in.Get(2)};
-        real_t spos[2]={in.Get(1),in.Get(3)};
-        real_t zero[2]={0,0};
-        RealArray<2> support_vel(svel);
-        RealArray<2> support_pos(spos);
-        real_t bridge_vel=in.Get(4);
-        real_t bridge_pos=in.Get(5);
-        RealArray<2> support_new_accel(zero);
-        real_t bridge_new_accel=bridge_accel(params,support_vel,support_pos,bridge_vel,bridge_pos,t,linear, mismatch,eig);
-        support_system_derivatives(params, support_vel, support_pos, bridge_new_accel, &support_new_accel,linear, mismatch,eig);
-        out.Set(0,support_new_accel[0]);
-        out.Set(1,support_vel[0]);
-        out.Set(2,support_new_accel[1]);
-        out.Set(3,support_vel[1]);
-        out.Set(4,bridge_new_accel);
-        out.Set(5,bridge_vel);
-    }
-};
+	class TacomaNarrows : public System<TacomaNarrows> {
+	friend class System<TacomaNarrows>;
+	public:
+	HOSTDEVICE TacomaNarrows(){
+	}
+	HOSTDEVICE TacomaNarrows (unsigned N, const ParamRange& amp_forcing, const ParamRange& freq_forcing, const ParamRange& freq_intrin, bool is_linear, const ParamRange& mismatch):
+		_params( make_default_params(freq_intrin.Get(Id()%N,N), freq_forcing.Get(Id()%N,N), amp_forcing.Get(Id()/N,N)) ),
+		_is_linear(is_linear),
+		_eigenvalue(is_linear?find_zero(_params):0),
+		_mismatch(mismatch.Get(Id()/N, N))
+	    {}
+	public:
+	    HOSTDEVICE TacomaParameters GetParams() const{
+		return _params;
+	    }
+	    HOSTDEVICE real_t GetMismatch() const{
+		return _mismatch;
+	    }
+	    HOSTDEVICE real_t GetEigenvalue() const{
+		return _eigenvalue;
+	    }
+	private:
+	    TacomaParameters _params;
+	    bool _is_linear;
+	    real_t _eigenvalue;
+	    real_t _mismatch;
+	    
+	    HOSTDEVICE size_t GetIndexOffset(const ThreadInfo& thread_info) const{
+		return thread_info.GetIndex()*6;
+	    }
+	    HOSTDEVICE size_t GetDimension() const{
+		return 6;
+	    }
+	    HOSTDEVICE void Fn(FixedSizeRealBuffer& out, FixedSizeRealBuffer& in, real_t t, const ThreadInfo& thread_info) const{
+		int param_index=thread_info.GetIndex();
+		
+		real_t eig=_eigenvalue;
+		real_t mismatch=_mismatch;
+		bool linear=_is_linear;
+		TacomaParameters params=_params;
+		real_t svel[2]={in.Get(0),in.Get(2)};
+		real_t spos[2]={in.Get(1),in.Get(3)};
+		real_t zero[2]={0,0};
+		RealArray<2> support_vel(svel);
+		RealArray<2> support_pos(spos);
+		real_t bridge_vel=in.Get(4);
+		real_t bridge_pos=in.Get(5);
+		RealArray<2> support_new_accel(zero);
+		real_t bridge_new_accel=bridge_accel(params,support_vel,support_pos,bridge_vel,bridge_pos,t,linear, mismatch,eig);
+		support_system_derivatives(params, support_vel, support_pos, bridge_new_accel, &support_new_accel,linear, mismatch,eig);
+		out.Set(0,support_new_accel[0]);
+		out.Set(1,support_vel[0]);
+		out.Set(2,support_new_accel[1]);
+		out.Set(3,support_vel[1]);
+		out.Set(4,bridge_new_accel);
+		out.Set(5,bridge_vel);
+	    }
+	};
 
 
-__global__ void TacomaNarrowsSweep(real_t* p_Ay, real_t* p_phi, real_t* state, bool sweep_forcing_freq, bool sweep_intrin_freq, bool sweep_amplitude=true, bool is_linear=false, bool mismatch=false, int t0=0, int t1=100, real_t h=0.01){
-    assert(sweep_intrin_freq==false || sweep_forcing_freq==false);
-    assert(sweep_amplitude==false || mismatch==false);
-    int N=gridDim.x*blockDim.x;
-    FixedSizeRealBuffer S(state,N*6);
-    TacomaNarrows tn(std::sqrt(N), sweep_amplitude? ParamRange(0,12) : ParamRange(10),
-                        sweep_forcing_freq?  ParamRange(0.4,1.4) : ParamRange(0.9),
-                        sweep_intrin_freq?  ParamRange(0.4, 1.4) : ParamRange(0.97),
-                        is_linear, mismatch? ParamRange(0,1):ParamRange(0));
-    int o=Id()*6;
-    real_t s0[6]={0};
-    real_t s1[6]={0};
-    real_t s00=state[o+1];
-    real_t s01=state[o+3];
-    PhaseState phi;
-    AmplitudeState Ay;
-    for(int t=t0/h; t<t1/h; ++t){
-        real_t T=t*h;
-        for(int i=0; i<6; ++i){
-            s0[i]=S.Get(i+o);
+	constexpr real_t h=0.001;
+	constexpr int tmax=int(1000.0/h);
+	__global__ void TacomaNarrowsSweep(real_t* p_Ay, real_t* p_phi, real_t* state, bool sweep_forcing_freq, bool sweep_intrin_freq, bool sweep_amplitude=true, bool is_linear=false, bool mismatch=false){
+		
+	    FixedSizeRealBuffer S;
+	    TacomaNarrows tn;
+	    {
+		    int N=gridDim.x*blockDim.x;
+		    S=FixedSizeRealBuffer(state,N*6);
+		    tn=TacomaNarrows(std::sqrt(N), sweep_amplitude? ParamRange(0,100) : ParamRange(10),
+				     sweep_forcing_freq?  ParamRange(0.4,1.4) : ParamRange(0.65),
+				     sweep_intrin_freq?  ParamRange(0.4, 1.4) : ParamRange(0.97),
+				     is_linear, mismatch? ParamRange(0,1):ParamRange(0));
+	    }
+	    int o=Id()*6;
+	    PhaseState phi;
+	    AmplitudeState Ay;
+
+	    
+	    for(int t=0; t<tmax; ++t){
+		real_t T=t*h;
+		real_t s0[2];
+		for(int i=0; i<2; ++i){
+		    s0[i]=S.Get(i*2+1+o);
+		}
+		tn.Solve(S, T, h);
+		if(t>15/(2.0*h)){
+		    phi.Accum(t, S.Get(3+o), s0[1], S.Get(1+o), s0[0]);
         }
-        tn.Solve(S, T, h);
-        for(int i=0; i<6; ++i){
-            s1[i]=S.Get(i+o);
-        }
-        if(t>(t1+t0)/2){
-            phi.Accum(t, s1[3], s0[3], s1[1], s0[1]);
-        }
-        Ay.Accum(s1[5]);
+        Ay.Accum(S.Get(5+o));
     }
     p_Ay[o/6]=Ay.Get();
     p_phi[o/6]=phi.Get();
-    state[o]=tn.GetParams().bridge_forcing_frequency;
+    {
+    state[o]=tn.GetParams().bridge_intrinsic_frequency/tn.GetParams().bridge_forcing_frequency;
     state[o+1]=tn.GetParams().bridge_forcing_amplitude;
-    state[o+2]=tn.GetParams().bridge_intrinsic_frequency;
     state[o+3]=tn.GetMismatch();
-    state[o+4]=tn.GetEigenvalue();
-    state[o+5]=s01-s00;
+    }
 }
 
 #include <fstream>
 void init_default(real_t* state, int N){
     
     for(int i=0; i<N*N; ++i){
-        state[i*6]=1.25;
-        state[i*6+1]=0;
-        state[i*6+2]=1.0;
-        state[i*6+3]=0;
-        state[i*6+4]=0.0001;
+        state[i*6]=0.03;
+        state[i*6+1]=0.03;
+        state[i*6+2]=0.04;
+        state[i*6+3]=0.04;
+        state[i*6+4]=0.0;
         state[i*6+5]=-0.0;
     }
 }
@@ -330,14 +323,14 @@ void init_basin(real_t* state, int N){
             state[n*6+1]=i/real_t(N)*0.1-0.05;
             state[n*6+2]=j/real_t(N)*0.1-0.05;
             state[n*6+3]=j/real_t(N)*0.1-0.05;
-            state[n*6+4]=0.0001;
+            state[n*6+4]=0.0;
             state[n*6+5]=0.0;
         }
     }
 }
 
 void write_sweep(std::ofstream& ofs, real_t* Ay, real_t* phi, real_t* state, int N=32){
-    ofs << "# i j x1 x0  forcing_freq forcing_ampl intrinsic_freq mismatch eigv dx       Ay  dphi\n";
+    ofs << "# i j x1 x0  Omega As Omega0 mismatch eigv dx       Ay  dphi\n";
     for(int i=0; i<N; ++i){
         for(int j=0; j<N; ++j){
             real_t n=real_t(N);
@@ -363,8 +356,9 @@ void write_basin(std::ofstream& ofs, real_t* Ay, real_t* phi, real_t* state, int
         }
     }
 }
-void Finish(){
-    cudaDeviceSynchronize();
+
+void Check(){
+
     cudaError_t error = cudaGetLastError();
     if(error!=cudaSuccess)
     {
@@ -372,57 +366,75 @@ void Finish(){
         exit(-1);
     }
 }
+void Finish(){
+    Check();
+    cudaDeviceSynchronize();
+    Check();
+}
+/*
+HOST void Hysteresis(init_x, init_y){
+	real_t s=0.0;//forcing frequency sweep offset
+	//always continue from the last state even when changing parameters
+	double state[6]={init_x, init_x, init_y, init_y, 0, 0};
+	double state0[6];
+	FixedSizeDoubleBuffer S(&state[0], 6);
+	while(true){//sweep over the parameter
+	     TacomaNarrows tn(1, ParamRange(20), ParamRange(s+0.4), ParamRange(0.97), false, ParamRange(0));
+	     PhaseState phi;
+	     for(int t=0; t<25/0.01; ++t){
+		     for(int i=0; i<6; ++i){
+			     state0[i]=state[i];
+		     }
+		     tn.Solve(S, t*0.01, 0.01);
+		     if(t>=1250){
+			     phi.Accum(t, S[3], state0[3], S[1], state0[1]);
+			}
+		     
+		}
+			    
+		     
+	}
+	
+}
+*/
 HOST int main(int argc, char** argv){
     real_t* Ay;
     real_t* phi;
     real_t* state;
-    int N=64;
-    int bsize=N*N/256;
+    int N=96;
+    const int bsize=768;
+    int bcount=N*N/bsize;
     cudaMallocManaged(&Ay, N*N*sizeof(real_t));
-    cudaMallocManaged(&phi, N*N*sizeof(double));
-    cudaMallocManaged(&state, 6*N*N*sizeof(double));
+    Check();
+    cudaMallocManaged(&phi, N*N*sizeof(real_t));
+    Check();
+    cudaMallocManaged(&state, 6*N*N*sizeof(real_t));
+    Check();
     {
     init_default(state,N);
-    TacomaNarrowsSweep<<<bsize,256>>>(Ay, phi, state, false, true, true, true); Finish();
-    std::ofstream ofs("eig_as_intrin.txt");
-    write_sweep(ofs, Ay, phi,state, N);
-    }
-    {
-    init_default(state,N);
-    TacomaNarrowsSweep<<<bsize,256>>>(Ay, phi, state, true, false, true, true); Finish();
-    std::ofstream ofs("eig_as_forcing.txt");
-    write_sweep(ofs, Ay, phi,state, N);
-    }
-    {
-    init_default(state,N);
-    TacomaNarrowsSweep<<<bsize,256>>>(Ay, phi, state, false, true, true, false); Finish();
-    std::ofstream ofs("sweep_as_intrin.txt");
-    write_sweep(ofs, Ay, phi,state, N);
-    }
-    {
-    init_default(state,N);
-    TacomaNarrowsSweep<<<bsize,256>>>(Ay, phi, state, true, false, true, false); Finish();
+    TacomaNarrowsSweep<<<bcount,bsize>>>(Ay, phi, state, true, false, true, false); Finish();
     std::ofstream ofs("sweep_as_forcing.txt");
     write_sweep(ofs, Ay, phi,state, N);
     }
     {
     init_default(state,N);
-    TacomaNarrowsSweep<<<bsize,256>>>(Ay, phi, state, false, true, false, false, true); Finish();
-    std::ofstream ofs("mismatch_as_intrin.txt");
+    TacomaNarrowsSweep<<<bcount,bsize>>>(Ay, phi, state, true, false, true, true); Finish();
+    std::ofstream ofs("eig_as_forcing.txt");
     write_sweep(ofs, Ay, phi,state, N);
     }
     {
     init_default(state,N);
-    TacomaNarrowsSweep<<<bsize,256>>>(Ay, phi, state, true, false, false, false, true); Finish();
+    TacomaNarrowsSweep<<<bcount,bsize>>>(Ay, phi, state, true, false, false, false, true); Finish();
     std::ofstream ofs("mismatch_as_forcing.txt");
     write_sweep(ofs, Ay, phi, state, N);
     }
     {
     std::ofstream ofs("basin.txt");
     init_basin(state,N);
-    TacomaNarrowsSweep<<<bsize,256>>>(Ay, phi, state, false, false, false, false, false); Finish();
+    TacomaNarrowsSweep<<<bcount,bsize>>>(Ay, phi, state, false, false, false, false, false); Finish();
     write_basin(ofs, Ay, phi, state, N);
     }
+//    Hysteresis(0.01,0.01);
     cudaFree(Ay);
     cudaFree(phi);
     cudaFree(state);
